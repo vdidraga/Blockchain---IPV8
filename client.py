@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
 from dataclasses import dataclass
+from ipv8.keyvault.crypto import default_eccrypto
+from pathlib import Path
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import (
     ConfigBuilder,
@@ -26,7 +28,6 @@ RESEND_INTERVAL = 10.0
 
 EMAIL = "v.a.didraga@student.tudelft.nl"
 GITHUB_URL = "https://github.com/vdidraga/Blockchain---IPV8"
-NONCE = 329772512
 
 
 @dataclass
@@ -40,6 +41,7 @@ class ResponsePayload(DataClassPayload[2]):
     success: bool
     message: varlenHutf8
 
+_ = ResponsePayload(False, "")
 
 class Lab1Community(Community):
     community_id = COMMUNITY_ID
@@ -53,6 +55,8 @@ class Lab1Community(Community):
         self.nonce = 0
 
     def started(self):
+        key = default_eccrypto.key_from_private_bin(Path("key.pem").read_bytes())
+        print(key.pub().key_to_bin().hex())
         self.register_task("submit_loop", self._submit_loop)
 
     async def _submit_loop(self):
@@ -110,7 +114,7 @@ async def main():
     community = instance.get_overlay(Lab1Community)
     community.email = EMAIL
     community.github_url = GITHUB_URL
-    community.nonce = NONCE
+    community.nonce = mine()
 
     await instance.start()
     try:
