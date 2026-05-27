@@ -200,13 +200,13 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         if self.mining_thread is not None and self.mining_thread.is_alive():
             self.mining_thread.join(timeout=0)
 
-            self.mining_stop_event = threading.Event()
-            self.mining_thread = threading.Thread(
-                target=self.pow_worker,
-                args=(current_job_id, self.mining_stop_event),
-                daemon=True
-            )
-            self.mining_thread.start()
+        self.mining_stop_event = threading.Event()
+        self.mining_thread = threading.Thread(
+            target=self.pow_worker,
+            args=(current_job_id, self.mining_stop_event),
+            daemon=True
+        )
+        self.mining_thread.start()
 
     def pow_worker(self, job_id: int, stop_event: threading.Event) -> None:
         if not self.mempool:
@@ -358,6 +358,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
 
     @lazy_wrapper(SubmitTransactionMessage)
     def on_submit_transaction(self, peer: Peer, payload: SubmitTransactionMessage) -> None:
+        print(f"Received submit transaction {payload}")
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
 
@@ -389,6 +390,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetChainHeight)
     def on_get_chain_height(self, peer: Peer, payload: GetChainHeight) -> None:
+        print(f"Received GetChainHeight: {payload}")
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
         
@@ -405,6 +407,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetBlock)
     def on_get_block(self, peer: Peer, payload: GetBlock) -> None:
+        print(f"Got GetBloCK: {payload}")
         key = peer.public_key.key_to_bin()
         if key != SERVER_PUBLIC_KEY and key not in OTHER_PEER_KEYS:
             return
