@@ -38,7 +38,7 @@ genesis_block = Block(
 def pack_block_header(prev_hash: bytes, txs_hash: bytes, timestamp: int, difficulty: int, nonce: int) -> bytes:
     assert len(prev_hash) == 32, "stoopid"
     assert len(txs_hash) == 32,  "dumbass"
-    return(prev_hash + txs_hash + struct.pack(">Q", timestamp) + struct.pack(">I", difficulty) + struct.pack(">Q", nonce))\
+    return(prev_hash + txs_hash + struct.pack(">Q", timestamp) + struct.pack(">I", difficulty) + struct.pack(">Q", nonce))
 
 def block_to_header(block: Block) -> bytes:
     return pack_block_header(block.prev_hash, block.txs_hash, block.timestamp, block.difficulty, block.nonce)
@@ -68,7 +68,7 @@ def compute_transaction_hash(tx: Transaction) -> bytes:
 
 # minin' n stuff
 def pow_search(block: Block) -> Block:
-    while True or block.nonce < 100_000_000:
+    while block.nonce < 100_000_000:
         if block.nonce % 10_000_000 == 0:
             print(f"Looked through {block.nonce} nonces")
 
@@ -79,6 +79,7 @@ def pow_search(block: Block) -> Block:
             block.block_hash = hash
             return block
         block.nonce += 1
+    raise Exception(f"Nonce not found for block {block}")
 
 def mine_block(height: int, prev_hash: bytes, transactions: list[Transaction], difficulty: int) -> Block:
     tx_hashes = [compute_transaction_hash(tx) for tx in transactions]
@@ -88,6 +89,37 @@ def mine_block(height: int, prev_hash: bytes, transactions: list[Transaction], d
     possible = Block(height, prev_hash, txs_hash, timestamp, difficulty, 0, bytes(32), tx_hashes)
     print("Mining summ blocks")
     return pow_search(possible)
+
+def mine_block_with_stop(
+        height: int, 
+        prev_hash: bytes,
+        transactions: list[Transaction],
+        difficulty: int,
+        job_id: int,
+        should_stop
+) -> Block | None:
+    tx_hashes = [compute_transaction_hash(tx) for tx in transactions]
+    txs_hash = compute_txs_hash(tx_hashes)
+    timestamp = int(time.time())
+
+    possible = Block(height, prev_hash, txs_hash, timestamp, difficulty, 0, bytes(32), tx_hashes)
+    print("Mining summ stopping blocks")
+
+    while possible.nonce < 100_000_000:
+        if should_stop():
+            return None
+        if possible.nonce % 10_000_000 == 0:
+            print(f"Looked through {possible.nonce} nonces")
+
+        header = block_to_header(possible)
+        block_hash = compute_block_hash(header)
+
+        if check_pow(block_hash, possible.difficulty):
+            print(f"Found sblock!: {possible}")
+            possible.block_hash = block_hash
+            return possible
+
+        possible.nonce += 1
 
 def verify_block(block: Block) -> bool:
     header = block_to_header(block)

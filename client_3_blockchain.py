@@ -11,6 +11,7 @@ from ipv8_service import IPv8
 
 from client3_miner import *
 from typing import List
+import threading
 
 
 # Already changed, ours now
@@ -129,19 +130,26 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.add_message_handler(SubmitTransactionMessage, self.on_submit_transaction)
         self.add_message_handler(GetChainHeight, self.on_get_chain_height)
         self.add_message_handler(GetBlock, self.on_get_block)
-
+        self.add_message_handler(BlockResponse, self.on_block_response)
         self.add_message_handler(BlockBroadcastMessage, self.on_block_broadcast)
         self.add_message_handler(HashRequest, self.on_hash_request)
         self.add_message_handler(HashResponse, self.on_hash_response)
-        
+
         self.server = None
         self.peers: dict[bytes, Peer] = {}
         self.mempool: List[Transaction] = []
         self.mempool_storage: List[Transaction] = []
         self.task: None | asyncio.Task = None
-        
+
         self.chain: list[Block] = [genesis_block]
-        
+        self.pending_blocks: list[Block] = []   
+
+        self.sync_their_height: int = 0
+        self.sync_peer: Peer | None = None
+
+        self.mining_job_id = 0  
+        self.mining_stop_event = threading.Event()
+        self.mining_thread: threading.Thread | None = None
 
     def started(self) -> None:
         print("Started peer")
@@ -184,29 +192,43 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         This function (re)starts a PoW search task
         It is called any time a transaction has been added to the mempool.
         """
+        self.mining_job_id += 1
+        current_job_id = self.mining_job_id
 
-        if self.task is not None:
-            self.task.cancel()
-            self.task = None
-        
-        self.task = asyncio.create_task(self.pow_search_task())
-    
-    async def pow_search_task(self) -> None:
-        try:
-            if len(self.mempool) == 0:
-                print("Mempool is empty when starting pow search")
-                return
-            
-            block = mine_block(
-                len(self.chain),
-                self.chain[-1].block_hash,
-                self.mempool,
-                DIFFICULTY
+        self.mining_stop_event.set()
+
+        if self.mining_thread is not None and self.mining_thread.is_alive():
+            self.mining_thread.join(timeout=0)
+
+            self.mining_stop_event = threading.Event()
+            self.mining_thread = threading.Thread(
+                target=self.pow_worker,
+                args=(current_job_id, self.mining_stop_event),
+                daemon=True
             )
-            self.on_block_found(block)
-        except asyncio.CancelledError:
-            print("Search cancelled")
+            self.mining_thread.start()
+
+    def pow_worker(self, job_id: int, stop_event: threading.Event) -> None:
+        if not self.mempool:
+            print("Empty mempool")
             return
+        
+        block = mine_block_with_stop(
+            len(self.chain),
+            self.chain[-1].block_hash,
+            self.mempool,
+            DIFFICULTY,
+            job_id,
+            lambda: stop_event.is_set() or job_id != self.mining_job_id
+        )
+
+        if block is None:
+            print("None block!?!?")
+            return
+        if job_id != self.mining_job_id or stop_event.is_set():
+            print("Stale block mined")
+            return
+        self.on_block_found(block)
         
 
     def on_block_found(self, block: Block) -> None:
@@ -262,22 +284,22 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
 
             if block.height < len(self.chain)-1:
                 print("Received unlinked block is behind, ignoring")
+                return
             
             elif block.height == len(self.chain)-1:
                 print("Received unlinked block is at the same level as ours, ignoring")
+                return
             
             elif block.height > len(self.chain)-1:
                 print("Received unlinked block is ahead of ours, adopting")
-                self.ez_send(peer, HashRequest(block.height-1))
-                # TODO: Block Adoption logic
-                # Figure out where we diverge
-                
-                # GOOD BOY: A - B - C - D
-                # FAST BOY: A - B - X - Y - Z - N
-
-                # Get all blocks from that point
-
-                # Restore mempool
+                if len(self.chain) < 2:
+                    print("They are disagreeing about the genesis block?")
+                    return None
+                self.ez_send(peer, HashRequest(len(self.chain)-1))
+                self.sync_peer = peer
+                self.sync_their_height = block.height
+                return
+                # TODO: restore mempool
         
         if block.height < len(self.chain)-1:
             print("Received linked block is behind, ignoring,  wtf")
@@ -301,6 +323,38 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         elif block.height > len(self.chain):
             print("Received LINKED block is more than 1 ahead of ours, what just happened")
   
+    def sync_their_tip(self, peer: Peer, fork_height: int, tip_height: int) -> None:
+        for h in range(fork_height, tip_height + 1):
+            self.ez_send(peer, GetBlock(h))
+
+    @lazy_wrapper(BlockResponse)
+    def on_block_response(self, peer: Peer, payload: BlockResponse) ->  None:
+        if peer != self.sync_peer:
+            return
+        block = Block(
+            payload.height, 
+            payload.prev_hash, 
+            payload.txs_hash,
+            payload.timestamp, 
+            payload.difficulty, 
+            payload.nonce,
+            payload.block_hash,
+            [payload.tx_hashes[i:i+32] for i in range(0, len(payload.tx_hashes), 32)]
+        )
+        if not verify_block(block):
+            print(f"Invalid block during sync at height {block.height}")
+            self.sync_peer = None
+            return
+        if not verify_prev_links_cleanly(block, self.chain[-1].block_hash):
+            print(f"Dirty link on chain during sync at height {block.height}")
+            self.sync_peer = None
+            return
+        self.chain.append(block)
+        print(f"synced block {block.height}")
+        if block.height == self.sync_their_height:
+            print("Sync complete, restart mining")
+            self.sync_peer = None
+            self.start_pow_search_task()
 
     @lazy_wrapper(SubmitTransactionMessage)
     def on_submit_transaction(self, peer: Peer, payload: SubmitTransactionMessage) -> None:
@@ -351,7 +405,8 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetBlock)
     def on_get_block(self, peer: Peer, payload: GetBlock) -> None:
-        if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
+        key = peer.public_key.key_to_bin()
+        if key != SERVER_PUBLIC_KEY and key not in OTHER_PEER_KEYS:
             return
             
         if payload.height < 0 or payload.height >= len(self.chain):
@@ -374,15 +429,18 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(HashRequest)
     def on_hash_request(self, peer: Peer, payload: HashRequest):
-        if peer.public_key.key_to_bin() != PUBLIC_KEYS:
+        if peer.public_key.key_to_bin() not in OTHER_PEER_KEYS:
             return
         print(f"Received hash request: {payload}")
+        if payload.height >= len(self.chain):
+            print("I'm not tall enough :(")
+            return
         message = HashResponse(payload.height, self.chain[payload.height].block_hash)
         self.ez_send(peer, message)
     
     @lazy_wrapper(HashResponse)
-    def on_hash_response(self, peer: Peer, payload: HashResponse):
-        if peer.public_key.key_to_bin() != PUBLIC_KEYS:
+    def on_hash_response(self, peer: Peer, payload: HashResponse) -> None:
+        if peer.public_key.key_to_bin() not in OTHER_PEER_KEYS:
             return
         print(f"Received HashResponse: {payload}")
         
@@ -390,14 +448,20 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         hash = payload.hash
 
         if self.chain[height].block_hash != hash:
+            if height == 0:
+                print("No common ancestor found, something is very wrong")
+                return
             print("Need to look backwards")
             message = HashRequest(height-1)
             self.ez_send(peer, message)
             return
         
         # Found Divergence point
-        
+        print(f"Fork point at height {height}, trimming chain and syncing")
+        self.chain = self.chain[:height + 1]
+        self.sync_their_tip(peer, height + 1, self.sync_their_height)
 
+        #TODO invalidate mempool (here?)
 
 async def start_client() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
