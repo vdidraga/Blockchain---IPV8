@@ -1,4 +1,4 @@
-from asyncio import run, create_task, Task
+import asyncio
 from dataclasses import dataclass
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, WalkerDefinition, Strategy, default_bootstrap_defs
@@ -11,6 +11,7 @@ from ipv8_service import IPv8
 
 from client3_miner import *
 from typing import List
+
 
 # Already changed, ours now
 COMMUNITY_ID = bytes.fromhex("4c61623247726f75705369676e696e67323032a1")
@@ -35,7 +36,20 @@ PUBLIC_KEY_3 = bytes.fromhex(
 
 PUBLIC_KEYS = [PUBLIC_KEY_1, PUBLIC_KEY_2, PUBLIC_KEY_3]
 GROUP_ID = "a6edc7f90a618bd8"
+DIFFICULTY = 20
 
+MY_ORDER = 2
+
+ALL_PEER_KEYS = {
+    PUBLIC_KEY_1: 0,
+    PUBLIC_KEY_2: 1,
+    PUBLIC_KEY_3: 2,
+}
+
+OTHER_PEER_KEYS = {
+    key: idx for key, idx in ALL_PEER_KEYS.items()
+    if key != PUBLIC_KEYS[MY_ORDER - 1]
+}
 
 @dataclass
 class SubmitTransactionMessage(DataClassPayload[1]):
@@ -44,13 +58,22 @@ class SubmitTransactionMessage(DataClassPayload[1]):
     timestamp: int
     signature: bytes
 
-
 @dataclass
 class SubmitTransactionResponseMessage(DataClassPayload[2]):
     success: bool
     tx_hash: bytes
     message: str
 
+@dataclass
+class BlockBroadcastMessage(DataClassPayload[9]):
+    height: int
+    prev_hash: bytes
+    txs_hash: bytes
+    timestamp: int
+    difficulty: int
+    nonce: int
+    block_hash: bytes
+    tx_hashes: bytes
 
 @dataclass
 class GetChainHeight(DataClassPayload[3]):
@@ -58,16 +81,14 @@ class GetChainHeight(DataClassPayload[3]):
 
 
 @dataclass
-class GetHeightResponse(DataClassPayload[4]):
+class ChainHeightResponse(DataClassPayload[4]):
     request_id: int
     height: int
     tip_hash: bytes
 
-
 @dataclass
 class GetBlock(DataClassPayload[5]):
     height: int
-
 
 @dataclass
 class BlockResponse(DataClassPayload[6]):
@@ -80,13 +101,24 @@ class BlockResponse(DataClassPayload[6]):
     block_hash: bytes
     tx_hashes: bytes
 
+@dataclass
+class HashRequest(DataClassPayload[7]):
+    height: int
+
+@dataclass
+class HashResponse(DataClassPayload[8]):
+    height: int
+    hash: bytes
+
 # Trigger dataclass payload compilation.
 _ = SubmitTransactionMessage(bytes(0), bytes(0), 0, bytes(0))
 _ = SubmitTransactionResponseMessage(False, bytes(0), "")
 _ = GetChainHeight(0)
-_ = GetHeightResponse(0, 0, bytes(0))
+_ = ChainHeightResponse(0, 0, bytes(0))
 _ = GetBlock(0)
 _ = BlockResponse(0, bytes(0), bytes(0), 0, 0, 0, bytes(0), bytes(0))
+_ = HashRequest(0)
+_ = HashResponse(0, bytes(0))
 
 class BlockchainEngineeringCommunity(Community, PeerObserver):
     community_id = COMMUNITY_ID
@@ -98,10 +130,15 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.add_message_handler(GetChainHeight, self.on_get_chain_height)
         self.add_message_handler(GetBlock, self.on_get_block)
 
+        self.add_message_handler(BlockBroadcastMessage, self.on_block_broadcast)
+        self.add_message_handler(HashRequest, self.on_hash_request)
+        self.add_message_handler(HashResponse, self.on_hash_response)
+        
         self.server = None
-        self.peers = [None] * 3
+        self.peers: dict[bytes, Peer] = {}
         self.mempool: List[Transaction] = []
-        self.task: None | Task = None
+        self.mempool_storage: List[Transaction] = []
+        self.task: None | asyncio.Task = None
         
         self.chain: list[Block] = [genesis_block]
         
@@ -113,7 +150,6 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.network.add_peer_observer(self)
 
         # Store myself.
-        self.peers[MY_ORDER - 1] = self.my_peer
 
     def on_peer_added(self, peer: Peer) -> None:
         peer_key = peer.public_key.key_to_bin()
@@ -125,31 +161,22 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             print("Found server!")
             self.server = peer
 
-        elif peer_key == PUBLIC_KEY_1:
-            print("Found peer1!")
-            self.peers[0] = peer
-
-        elif peer_key == PUBLIC_KEY_2:
-            print("Found peer2!")
-            self.peers[1] = peer
-
-        elif peer_key == PUBLIC_KEY_3:
-            print("Found peer3!")
-            self.peers[2] = peer
+        elif peer_key in OTHER_PEER_KEYS:
+            self.peers[peer_key] = peer
+            print(f"Found peer {OTHER_PEER_KEYS[peer_key] + 1}")
         
-        print(f"Current peers state: {[p.address if p else None for p in self.peers]}")
+        print(f"Current peers state: {[p.address if p else None for p in self.peers.values()]}")
         print(f"Server: {self.server.address if self.server else None}")
 
     def on_peer_removed(self, peer: Peer) -> None:
-        print(f"Peer removed: {peer.public_key.key_to_bin().hex()}")
+        key = peer.public_key.key_to_bin()
+        if key == SERVER_PUBLIC_KEY:
+            self.server = None
+        self.peers.pop(key, None)
 
     def send_to_others(self, payload: DataClassPayload) -> None:
-        for p in self.peers:
-            if p is None:
-                continue
-            if p == self.my_peer:
-                continue
-            self.ez_send(p, payload)
+        for peer in self.peers.values():
+            self.ez_send(peer, payload)
         
     
     def start_pow_search_task(self)  -> None:
@@ -162,28 +189,126 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             self.task.cancel()
             self.task = None
         
-        self.task = create_task(self.pow_search_task())
+        self.task = asyncio.create_task(self.pow_search_task())
     
     async def pow_search_task(self) -> None:
-        if len(self.mempool) == 0:
-            print("Mempool is empty when starting pow search")
+        try:
+            if len(self.mempool) == 0:
+                print("Mempool is empty when starting pow search")
+                return
+            
+            block = mine_block(
+                len(self.chain),
+                self.chain[-1].block_hash,
+                self.mempool,
+                DIFFICULTY
+            )
+            self.on_block_found(block)
+        except asyncio.CancelledError:
+            print("Search cancelled")
             return
-        
-        block = 
         
 
     def on_block_found(self, block: Block) -> None:
         print("Found block function called")
+
+        self.chain.append(block)
+
+        included_hashes = set(block.tx_hashes)
+
+        self.mempool = [
+            tx for tx in self.mempool 
+            if compute_transaction_hash(tx) not in included_hashes
+        ]
         
+        print(f"Chain height is now {block.height}")
+        
+        message = BlockBroadcastMessage(
+            block.height,
+            block.prev_hash,
+            block.txs_hash,
+            block.timestamp,
+            block.difficulty,
+            block.nonce,
+            block.block_hash,
+            b"".join(block.tx_hashes),
+        )
+
+        self.send_to_others(message)
+
+    @lazy_wrapper(BlockBroadcastMessage)
+    def on_block_broadcast(self, peer: Peer, payload: BlockBroadcastMessage) -> None:
+        if peer.public_key.key_to_bin() not in PUBLIC_KEYS:
+            print("Received block broadcast from unknown peer")
+            return
+
+        block = Block(
+            payload.height,
+            payload.prev_hash,
+            payload.txs_hash,
+            payload.timestamp,
+            payload.difficulty,
+            payload.nonce,
+            payload.block_hash,
+            [payload.tx_hashes[i:i+32] for i in range(0, len(payload.tx_hashes), 32)]
+        )
+
+        if not verify_block(block):
+            print(f"Received invalid block: {block}")
+            return
+        
+        if not verify_prev_links_cleanly(block, self.chain[-1].block_hash):
+            print("Received block from different chain")
+
+            if block.height < len(self.chain)-1:
+                print("Received unlinked block is behind, ignoring")
+            
+            elif block.height == len(self.chain)-1:
+                print("Received unlinked block is at the same level as ours, ignoring")
+            
+            elif block.height > len(self.chain)-1:
+                print("Received unlinked block is ahead of ours, adopting")
+                self.ez_send(peer, HashRequest(block.height-1))
+                # TODO: Block Adoption logic
+                # Figure out where we diverge
+                
+                # GOOD BOY: A - B - C - D
+                # FAST BOY: A - B - X - Y - Z - N
+
+                # Get all blocks from that point
+
+                # Restore mempool
+        
+        if block.height < len(self.chain)-1:
+            print("Received linked block is behind, ignoring,  wtf")
+        
+        elif block.height == len(self.chain)-1:
+            print("Received linked block is at the same level as ours, ignoring, wtf")
+        
+        elif block.height == len(self.chain):
+            print("Received linked block is ahead of ours, appending")
+
+            # First clean mempool of transactions in the block
+            included_hashes = set(block.tx_hashes)
+            self.mempool = [
+                tx for tx in self.mempool 
+                if compute_transaction_hash(tx) not in included_hashes
+            ]
+            self.chain.append(block)
+
+            # Then restart pow search
+            self.start_pow_search_task()
+        elif block.height > len(self.chain):
+            print("Received LINKED block is more than 1 ahead of ours, what just happened")
+  
 
     @lazy_wrapper(SubmitTransactionMessage)
     def on_submit_transaction(self, peer: Peer, payload: SubmitTransactionMessage) -> None:
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
-        # TODO: Implementation of SubmitTransaction
 
         tx = Transaction(
-            peer.public_key.key_to_bin(),
+            payload.sender_key,
             payload.data,
             payload.timestamp,
             payload.signature
@@ -193,26 +318,45 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             return
 
         tx_hash = compute_transaction_hash(tx)
+
+        if any(compute_transaction_hash(t) == tx_hash for t in self.mempool):
+            print(f"Duplicate signature: {tx}")
+            return
+        
         self.mempool.append(tx)
+        self.mempool_storage.append(tx)
         
 
         resposne = SubmitTransactionResponseMessage(True, tx_hash,
                                     "Successfully submitted transaction")
         self.ez_send(peer, resposne)
 
-        self.notify_start_search()
+        self.start_pow_search_task()
     
     @lazy_wrapper(GetChainHeight)
     def on_get_chain_height(self, peer: Peer, payload: GetChainHeight) -> None:
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
-        # TODO: Implementation of GetChainHeight
+        
+        height = len(self.chain) - 1
+        tip_hash = self.chain[-1].block_hash
+
+        response = ChainHeightResponse(
+            payload.request_id,
+            height,
+            tip_hash,
+        )
+
+        self.ez_send(peer, response)
     
     @lazy_wrapper(GetBlock)
     def on_get_block(self, peer: Peer, payload: GetBlock) -> None:
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
             
+        if payload.height < 0 or payload.height >= len(self.chain):
+            return
+
         block = self.chain[payload.height]
 
         response = BlockResponse(
@@ -227,6 +371,32 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         )
 
         self.ez_send(peer, response)
+    
+    @lazy_wrapper(HashRequest)
+    def on_hash_request(self, peer: Peer, payload: HashRequest):
+        if peer.public_key.key_to_bin() != PUBLIC_KEYS:
+            return
+        print(f"Received hash request: {payload}")
+        message = HashResponse(payload.height, self.chain[payload.height].block_hash)
+        self.ez_send(peer, message)
+    
+    @lazy_wrapper(HashResponse)
+    def on_hash_response(self, peer: Peer, payload: HashResponse):
+        if peer.public_key.key_to_bin() != PUBLIC_KEYS:
+            return
+        print(f"Received HashResponse: {payload}")
+        
+        height = payload.height
+        hash = payload.hash
+
+        if self.chain[height].block_hash != hash:
+            print("Need to look backwards")
+            message = HashRequest(height-1)
+            self.ez_send(peer, message)
+            return
+        
+        # Found Divergence point
+        
 
 
 async def start_client() -> None:
@@ -252,4 +422,4 @@ async def start_client() -> None:
     await run_forever()
 
 
-run(start_client())
+asyncio.run(start_client())
