@@ -68,9 +68,9 @@ def compute_transaction_hash(tx: Transaction) -> bytes:
 
 # minin' n stuff
 def pow_search(block: Block) -> Block:
-    while block.nonce < 100_000_000:
+    while block.nonce < 10_100_000_000:
         if block.nonce % 10_000_000 == 0:
-            print(f"Looked through {block.nonce} nonces")
+            print(f'Looked through {block.nonce:,} nonces')
 
         header = block_to_header(block)
         hash = compute_block_hash(header)
@@ -105,11 +105,11 @@ def mine_block_with_stop(
     possible = Block(height, prev_hash, txs_hash, timestamp, difficulty, 0, bytes(32), tx_hashes)
     print("Mining summ stopping blocks")
 
-    while possible.nonce < 100_000_000:
+    while possible.nonce < 10_100_000_000:
         if should_stop():
             return None
         if possible.nonce % 10_000_000 == 0:
-            print(f"Looked through {possible.nonce} nonces")
+            print(f"Looked through {possible.nonce:,} nonces")
 
         header = block_to_header(possible)
         block_hash = compute_block_hash(header)
@@ -143,3 +143,5 @@ def verify_prev_links_cleanly(block: Block, tipHash: bytes) -> bool:
         return False
     
     return True
+
+genesis_block.block_hash = compute_block_hash(block_to_header(genesis_block))
