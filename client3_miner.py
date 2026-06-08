@@ -23,15 +23,18 @@ class Transaction:
     timestamp: int
     signature: bytes
 
-# TODO: Change this
+GENESIS_PREV_HASH = bytes(32)
+GENESIS_TXS_HASH = sha256(b"").digest()
+GENESIS_HEADER = GENESIS_PREV_HASH + GENESIS_TXS_HASH + struct.pack(">QIQ", 0, 0, 0)
+
 genesis_block = Block(
     height=0,
-    prev_hash=bytes(32),
-    txs_hash=sha256(b"").digest(),
+    prev_hash=GENESIS_PREV_HASH,
+    txs_hash=GENESIS_TXS_HASH,
     timestamp=0,
     difficulty=0,
     nonce=0,
-    block_hash=bytes(32),
+    block_hash=sha256(GENESIS_HEADER).digest(),
     tx_hashes=[]
 )
 

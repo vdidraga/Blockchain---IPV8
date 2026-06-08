@@ -102,7 +102,6 @@ class BlockResponse(DataClassPayload[6]):
     nonce: int
     block_hash: bytes
     tx_hashes: bytes
-
 @dataclass
 class HashRequest(DataClassPayload[7]):
     height: int
