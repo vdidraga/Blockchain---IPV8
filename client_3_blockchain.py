@@ -25,13 +25,13 @@ PUBLIC_KEY_1 = bytes.fromhex(
     "4c69624e61434c504b3a6ddc887fd7a98d41126d24eb4d3349f27683c555698c94b80b0a11bb43c2f6765645e827f4c331c3eb653f1f52d38683423e6b013c25f3157ed8adbf86aa997a"
 )
 # NEW JACEK PUBLIC KEY
-# PUBLIC_KEY_2 = bytes.fromhex(
-#     "4c69624e61434c504b3aea247287365cefd9dfb2bc0916f6b48cc92fb538ba6de6d4e48bc963e53ec457f55086c09ef0141d8b82305528915235be3166e967dc50e0d6c13d8a91108670"
-# )
-# OLD JACEK PUBLIC KEY
 PUBLIC_KEY_2 = bytes.fromhex(
-    "4c69624e61434c504b3ae9a6f3ee192bcb9833fe647728a19e74d6b7fe2e42efe96f4de40d4922aa7a3dcb7c47a5f1776db9902548aab9fb4ef06dd1dc39b12f99f5e8326334ebe7fcd3"
+    "4c69624e61434c504b3aea247287365cefd9dfb2bc0916f6b48cc92fb538ba6de6d4e48bc963e53ec457f55086c09ef0141d8b82305528915235be3166e967dc50e0d6c13d8a91108670"
 )
+# OLD JACEK PUBLIC KEY
+# PUBLIC_KEY_2 = bytes.fromhex(
+#     "4c69624e61434c504b3ae9a6f3ee192bcb9833fe647728a19e74d6b7fe2e42efe96f4de40d4922aa7a3dcb7c47a5f1776db9902548aab9fb4ef06dd1dc39b12f99f5e8326334ebe7fcd3"
+# )
 PUBLIC_KEY_3 = bytes.fromhex(
     "4c69624e61434c504b3a87ca1dee80e128d6ad389fb7b2fd1f99bfa86377fdf3815e97b734d767c48840dc818b5467b27b8fad1e434e07005e05eac40a726334a5b3a83b289a51ca097c"
 )
@@ -219,7 +219,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     def pow_worker(self, job_id: int, stop_event: threading.Event) -> None:
         if not self.mempool:
             print("Empty mempool")
-            # return
+            return
         
         block = mine_block_with_stop(
             len(self.chain),
