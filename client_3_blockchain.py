@@ -219,9 +219,9 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.mining_thread.start()
 
     def pow_worker(self, job_id: int, stop_event: threading.Event) -> None:
-        # if not self.mempool:
-        #     print("Empty mempool")
-        #     #return
+        if not self.mempool:
+            print("Empty mempool")
+            #return
         
         block = mine_block_with_stop(
             len(self.chain),
