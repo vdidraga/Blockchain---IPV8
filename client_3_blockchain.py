@@ -15,7 +15,7 @@ import threading
 
 
 # Already changed, ours now
-COMMUNITY_ID = bytes.fromhex("4c61623247726f75705369676e696e67323032a1")
+COMMUNITY_ID = bytes.fromhex("4c61623247726f75705369676e696e67323032a6")
 
 SERVER_PUBLIC_KEY = bytes.fromhex(
     "4c69624e61434c504b3ae3fc099fb56ca3b5e1de9a1c843387f2acdbb78b1bd4350ffde518068a0d246344b10d0d8c355fd0d76873e7d7f7838f3715e025af08f791324495e083331ce6"
@@ -177,6 +177,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         elif peer_key in OTHER_PEER_KEYS:
             self.peers[peer_key] = peer
             print(f"Found peer {OTHER_PEER_KEYS[peer_key] + 1}")
+            
         
         print(f"Current peers state: {[p.address if p else None for p in self.peers.values()]}")
         print(f"Server: {self.server.address if self.server else None}")
@@ -218,9 +219,9 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.mining_thread.start()
 
     def pow_worker(self, job_id: int, stop_event: threading.Event) -> None:
-        if not self.mempool:
-            print("Empty mempool")
-            return
+        # if not self.mempool:
+        #     print("Empty mempool")
+        #     #return
         
         block = mine_block_with_stop(
             len(self.chain),
@@ -554,6 +555,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.sync_block_count = self.sync_their_height - height
         self.fork_height = height
         self.sync_their_tip(peer, height + 1, self.sync_their_height)
+
 
 async def start_client() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
