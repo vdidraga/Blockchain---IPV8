@@ -3,6 +3,7 @@ from hashlib import sha256
 from dataclasses import dataclass
 from hashlib import sha256
 from ipv8.keyvault.crypto import default_eccrypto
+import os
 
 @dataclass
 class Block:
@@ -22,15 +23,18 @@ class Transaction:
     timestamp: int
     signature: bytes
 
-# TODO: Change this
+GENESIS_PREV_HASH = bytes(32)
+GENESIS_TXS_HASH = sha256(b"").digest()
+GENESIS_HEADER = GENESIS_PREV_HASH + GENESIS_TXS_HASH + struct.pack(">QIQ", 0, 0, 0)
+
 genesis_block = Block(
     height=0,
-    prev_hash=bytes(32),
-    txs_hash=sha256(b"").digest(),
+    prev_hash=GENESIS_PREV_HASH,
+    txs_hash=GENESIS_TXS_HASH,
     timestamp=0,
     difficulty=0,
     nonce=0,
-    block_hash=bytes(32),
+    block_hash=sha256(GENESIS_HEADER).digest(),
     tx_hashes=[]
 )
 
@@ -68,9 +72,9 @@ def compute_transaction_hash(tx: Transaction) -> bytes:
 
 # minin' n stuff
 def pow_search(block: Block) -> Block:
-    while block.nonce < 100_000_000:
+    while block.nonce < 10_100_000_000:
         if block.nonce % 10_000_000 == 0:
-            print(f"Looked through {block.nonce} nonces")
+            print(f'Looked through {block.nonce:,} nonces')
 
         header = block_to_header(block)
         hash = compute_block_hash(header)
@@ -104,22 +108,23 @@ def mine_block_with_stop(
 
     possible = Block(height, prev_hash, txs_hash, timestamp, difficulty, 0, bytes(32), tx_hashes)
     print("Mining summ stopping blocks")
+    num_tries = 0
 
-    while possible.nonce < 100_000_000:
+    while num_tries < 10_000_000_000:
         if should_stop():
             return None
-        if possible.nonce % 10_000_000 == 0:
-            print(f"Looked through {possible.nonce} nonces")
-
+        if num_tries % 10_000_000 == 0:
+            print(f"Looked through {num_tries:,} nonces")
+        nonce = int.from_bytes(os.urandom(7), "big")
+        possible.nonce = nonce
         header = block_to_header(possible)
         block_hash = compute_block_hash(header)
-
+        
         if check_pow(block_hash, possible.difficulty):
             print(f"Found sblock!: {possible}")
             possible.block_hash = block_hash
             return possible
-
-        possible.nonce += 1
+        num_tries += 1
 
 def verify_block(block: Block) -> bool:
     header = block_to_header(block)
