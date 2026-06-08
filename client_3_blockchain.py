@@ -121,6 +121,7 @@ _ = GetBlock(0)
 _ = BlockResponse(0, bytes(0), bytes(0), 0, 0, 0, bytes(0), bytes(0))
 _ = HashRequest(0)
 _ = HashResponse(0, bytes(0))
+_ = BlockBroadcastMessage(0, bytes(0), bytes(0), 0, 0, 0, bytes(0), bytes(0))
 
 class BlockchainEngineeringCommunity(Community, PeerObserver):
     community_id = COMMUNITY_ID
@@ -464,7 +465,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetChainHeight)
     def on_get_chain_height(self, peer: Peer, payload: GetChainHeight) -> None:
-        print(f"Received GetChainHeight: {payload}")
+        print(f"Received GetChainHeight: {payload}, my height: {len(self.chain) - 1}")
         if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
             return
         
