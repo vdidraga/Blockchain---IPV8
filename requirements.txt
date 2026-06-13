@@ -12,3 +12,4 @@ packaging
 apispec>=6.0.0
 eccrypto
 pytest
+dotenv

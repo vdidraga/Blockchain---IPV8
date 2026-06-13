@@ -10,7 +10,7 @@ Contact email: v.a.didraga@student.tudelft.nl
 
 ### How to run
 
-1. Set up a virutal environment using your preferred Python package manager, recommended Python version: 3.14
+1. Set up a virutal environment using your preferred Python package manager, recommended Python version: 3.13
 2. Install the Python requirements, for example 
 ```bash
 pip install -r requirements.txt
@@ -23,7 +23,16 @@ python client_3_blockchain.py
 
 ### How to test
 
-1. Set up according to 
+1. Set up according to [How to run](#how-to-run)
+2. Run 
+```bash
+pytest tests/ -v
+```
+To run all the tests or
+```bash
+pytest tests/[test_name].py -v
+```
+To run a specific test
 
 ## Explanations of Files
 
