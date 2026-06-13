@@ -40,8 +40,8 @@ genesis_block = Block(
 
 # headers n stuff
 def pack_block_header(prev_hash: bytes, txs_hash: bytes, timestamp: int, difficulty: int, nonce: int) -> bytes:
-    assert len(prev_hash) == 32, "stoopid"
-    assert len(txs_hash) == 32,  "dumbass"
+    assert len(prev_hash) == 32, "prev_hash len not 32, FIX IT"
+    assert len(txs_hash) == 32,  "txs_hash len not 32, FIX IT"
     return(prev_hash + txs_hash + struct.pack(">Q", timestamp) + struct.pack(">I", difficulty) + struct.pack(">Q", nonce))
 
 def block_to_header(block: Block) -> bytes:
@@ -69,30 +69,6 @@ def verify_transaction_signature(tx: Transaction) ->  bool:
 
 def compute_transaction_hash(tx: Transaction) -> bytes:
     return sha256(tx.sender_key + tx.data + struct.pack(">Q", tx.timestamp) + tx.signature).digest()
-
-# minin' n stuff
-def pow_search(block: Block) -> Block:
-    while block.nonce < 10_100_000_000:
-        if block.nonce % 10_000_000 == 0:
-            print(f'Looked through {block.nonce:,} nonces')
-
-        header = block_to_header(block)
-        hash = compute_block_hash(header)
-        if check_pow(hash, block.difficulty):
-            print(f"Found block! {block}")
-            block.block_hash = hash
-            return block
-        block.nonce += 1
-    raise Exception(f"Nonce not found for block {block}")
-
-def mine_block(height: int, prev_hash: bytes, transactions: list[Transaction], difficulty: int) -> Block:
-    tx_hashes = [compute_transaction_hash(tx) for tx in transactions]
-    txs_hash = compute_txs_hash(tx_hashes)
-    timestamp = int(time.time())
-
-    possible = Block(height, prev_hash, txs_hash, timestamp, difficulty, 0, bytes(32), tx_hashes)
-    print("Mining summ blocks")
-    return pow_search(possible)
 
 def mine_block_with_stop(
         height: int, 
@@ -129,7 +105,6 @@ def mine_block_with_stop(
 def verify_block(block: Block) -> bool:
     header = block_to_header(block)
     hash = compute_block_hash(header)
-    
     if hash != block.block_hash:
         return False
     

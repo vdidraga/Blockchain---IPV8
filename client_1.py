@@ -15,14 +15,19 @@ from ipv8.lazy_community import lazy_wrapper
 from ipv8.messaging.payload_dataclass import DataClassPayload, type_from_format
 from ipv8.peer import Peer
 from ipv8_service import IPv8
+from os import getenv
+from dotenv import load_dotenv
 
 from mine import mine
 
 varlenHutf8 = type_from_format("varlenHutf8")
 
+load_dotenv()
+KEYS_FILE = getenv("KEYS_FILE")
+assert KEYS_FILE
+
 COMMUNITY_ID = bytes.fromhex("2c1cc6e35ff484f99ebdfb6108477783c0102881")
 SERVER_KEY_BYTES = bytes.fromhex("4c69624e61434c504b3a86b23934a28d669c390e2d1fc0b0870706c4591cc0cb178bc5a811da6d87d27ef319b2638ef60cc8d119724f4c53a1ebfad919c3ac4136c501ce5c09364e0ebb")
-KEY_FILE = "key.pem"
 RESEND_INTERVAL = 10.0
 
 
@@ -93,13 +98,13 @@ class Lab1Community(Community):
 
 
 async def main():
-    key = Path(KEY_FILE)
+    key = Path(KEYS_FILE)
     if not key.exists():
         key.write_bytes(default_eccrypto.generate_key("curve25519").key_to_bin())
 
     builder = (
         ConfigBuilder().clear_keys().clear_overlays()
-        .add_key("my_key", "curve25519", KEY_FILE)
+        .add_key("my_key", "curve25519", KEYS_FILE)
         .add_overlay(
             "Lab1Community",
             "my_key",

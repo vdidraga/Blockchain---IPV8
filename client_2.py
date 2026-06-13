@@ -1,5 +1,7 @@
 from asyncio import run
 from dataclasses import dataclass
+from dotenv import load_dotenv
+from os import getenv
 
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, WalkerDefinition, Strategy, default_bootstrap_defs
@@ -11,6 +13,12 @@ from ipv8.lazy_community import lazy_wrapper
 from ipv8_service import IPv8
 
 
+# Load environment variables 
+GROUP_ID = getenv("GROUP_ID")
+MY_ORDER = int(getenv("MY_ORDER"))
+KEYS_FILE = getenv("KEYS_FILE")
+assert GROUP_ID and MY_ORDER and KEYS_FILE
+
 COMMUNITY_ID = bytes.fromhex("4c61623247726f75705369676e696e6732303236")
 
 SERVER_PUBLIC_KEY = bytes.fromhex("4c69624e61434c504b3a82e33614a342774e084af80835838d6dbdb64a537d3ddb6c1d82011a7f101553cda40cf5fa0e0fc23abd0a9c4f81322282c5b34566f6b8401f5f683031e60c96")
@@ -21,10 +29,6 @@ PUBLIC_KEY_3 = bytes.fromhex("4c69624e61434c504b3a87ca1dee80e128d6ad389fb7b2fd1f
 
 PUBLIC_KEYS = [PUBLIC_KEY_1, PUBLIC_KEY_2, PUBLIC_KEY_3]
 
-# 1 = Antreas, 2 = Jacek, 3 = Victor
-MY_ORDER = 3
-
-GROUP_ID = "4bb7a5c4f6a550f3"
 
 REGISTER_GROUP = False
 START_PROTOCOL = False
@@ -398,7 +402,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
 
 async def start_client() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
-    builder.add_key("me", "curve25519", "key.pem")
+    builder.add_key("me", "curve25519", KEYS_FILE)
 
     builder.add_overlay(
         "BlockchainEngineeringCommunity",
