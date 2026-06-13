@@ -190,7 +190,6 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.round_number = payload.round_number
         print(payload)
         self.send_to_others(NonceMessage(payload.nonce))
-
         # Handle nonce yourself
         sig = self.crypto.create_signature(self.my_peer.key, payload.nonce)
         self.sigs[MY_ORDER-1] = sig

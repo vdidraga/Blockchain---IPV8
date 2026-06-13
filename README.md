@@ -31,7 +31,7 @@ python client_3_blockchain.py
 
 Client for the 1st assignment. Uses `mine.py` to find a nonce and then continuously resends it until it receives a response from the server.
 
-### mine.py
+### nonce_finder.py
 
 Miner for 1st assignment. Compiles a payload and mines a nonce for it.
 
