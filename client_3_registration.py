@@ -1,5 +1,7 @@
 from asyncio import run
 from dataclasses import dataclass
+from os import getenv
+from dotenv import load_dotenv
 
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import (
@@ -15,19 +17,21 @@ from ipv8.peerdiscovery.network import PeerObserver
 from ipv8.util import run_forever
 from ipv8_service import IPv8
 
+load_dotenv()
+community_3_id = getenv("CLIENT_3_COMMUNITY_ID", "")
+GROUP_ID = getenv("GROUP_ID", "")
+KEYS_FILE = getenv("KEYS_FILE", "")
+assert "" not in [community_3_id, GROUP_ID, KEYS_FILE]
 
 REGISTRATION_COMMUNITY_ID = bytes.fromhex(
     "4c616233426c6f636b636861696e323032365057"
 )
 OUR_COMMUNITY_ID = bytes.fromhex(
-    "4c61623247726f75705369676e696e67323032b2"
+    community_3_id
 )
 SERVER_PUBLIC_KEY = bytes.fromhex(
     "4c69624e61434c504b3ae3fc099fb56ca3b5e1de9a1c843387f2acdbb78b1bd4350ffde518068a0d246344b10d0d8c355fd0d76873e7d7f7838f3715e025af08f791324495e083331ce6"
 )
-# GROUP_ID = "a6edc7f90a618bd8"
-GROUP_ID = "f9e7dc3ac7b0a791"
-KEYS_FILE = "myKeys.pem"
 
 
 @dataclass

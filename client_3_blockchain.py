@@ -8,14 +8,24 @@ from ipv8.peerdiscovery.network import PeerObserver
 from ipv8.messaging.payload_dataclass import DataClassPayload
 from ipv8.lazy_community import lazy_wrapper
 from ipv8_service import IPv8
+from dotenv import load_dotenv
+from os import getenv
 
 from client3_miner import *
+from client3_miner import Transaction, Block, genesis_block, mine_block_with_stop, compute_transaction_hash, compute_block_hash, block_to_header, verify_block, verify_prev_links_cleanly, verify_transaction_signature
 from typing import List
 import threading
 
+load_dotenv()
 
-# Already changed, ours now
-COMMUNITY_ID = bytes.fromhex("4c61623247726f75705369676e696e67323032b2")
+# Load environment variables 
+community_3_id = getenv("CLIENT_3_COMMUNITY_ID", "")
+GROUP_ID = getenv("GROUP_ID", "")
+MY_ORDER = int(getenv("MY_ORDER", -1))
+KEYS_FILE = getenv("KEYS_FILE", "")
+assert "" not in [community_3_id, GROUP_ID, KEYS_FILE]
+assert MY_ORDER != -1
+COMMUNITY_ID = bytes.fromhex(community_3_id)
 
 SERVER_PUBLIC_KEY = bytes.fromhex(
     "4c69624e61434c504b3ae3fc099fb56ca3b5e1de9a1c843387f2acdbb78b1bd4350ffde518068a0d246344b10d0d8c355fd0d76873e7d7f7838f3715e025af08f791324495e083331ce6"
@@ -24,11 +34,6 @@ SERVER_PUBLIC_KEY = bytes.fromhex(
 PUBLIC_KEY_1 = bytes.fromhex(
     "4c69624e61434c504b3a6ddc887fd7a98d41126d24eb4d3349f27683c555698c94b80b0a11bb43c2f6765645e827f4c331c3eb653f1f52d38683423e6b013c25f3157ed8adbf86aa997a"
 )
-# NEW JACEK PUBLIC KEY
-# PUBLIC_KEY_2 = bytes.fromhex(
-#     "4c69624e61434c504b3aea247287365cefd9dfb2bc0916f6b48cc92fb538ba6de6d4e48bc963e53ec457f55086c09ef0141d8b82305528915235be3166e967dc50e0d6c13d8a91108670"
-# )
-# OLD JACEK PUBLIC KEY
 PUBLIC_KEY_2 = bytes.fromhex(
     "4c69624e61434c504b3ae9a6f3ee192bcb9833fe647728a19e74d6b7fe2e42efe96f4de40d4922aa7a3dcb7c47a5f1776db9902548aab9fb4ef06dd1dc39b12f99f5e8326334ebe7fcd3"
 )
@@ -36,11 +41,13 @@ PUBLIC_KEY_3 = bytes.fromhex(
     "4c69624e61434c504b3a87ca1dee80e128d6ad389fb7b2fd1f99bfa86377fdf3815e97b734d767c48840dc818b5467b27b8fad1e434e07005e05eac40a726334a5b3a83b289a51ca097c"
 )
 
+# List of keys of other miners
 PUBLIC_KEYS = [PUBLIC_KEY_1, PUBLIC_KEY_2, PUBLIC_KEY_3]
-GROUP_ID = "a6edc7f90a618bd8"
-DIFFICULTY = 25
 
-MY_ORDER = 2
+# List of clients from whom we accept transactions
+CLIENT_KEYS = [SERVER_PUBLIC_KEY]
+DIFFICULTY = 20
+MAX_DISAGREEMENT_DEPTH = 50000
 
 ALL_PEER_KEYS = {
     PUBLIC_KEY_1: 0,
@@ -111,6 +118,16 @@ class HashResponse(DataClassPayload[8]):
     height: int
     hash: bytes
 
+@dataclass
+class DoubleHashRequest(DataClassPayload[10]):
+    height: int
+
+@dataclass
+class DoubleHashResponse(DataClassPayload[11]):
+    height: int
+    hash: bytes
+    hash_previous: bytes
+
 # Trigger dataclass payload compilation.
 _ = SubmitTransactionMessage(bytes(0), bytes(0), 0, bytes(0))
 _ = SubmitTransactionResponseMessage(False, bytes(0), "")
@@ -121,6 +138,8 @@ _ = BlockResponse(0, bytes(0), bytes(0), 0, 0, 0, bytes(0), bytes(0))
 _ = HashRequest(0)
 _ = HashResponse(0, bytes(0))
 _ = BlockBroadcastMessage(0, bytes(0), bytes(0), 0, 0, 0, bytes(0), bytes(0))
+_ = DoubleHashRequest(0)
+_ = DoubleHashResponse(0, bytes(0), bytes(0))
 
 class BlockchainEngineeringCommunity(Community, PeerObserver):
     community_id = COMMUNITY_ID
@@ -135,9 +154,11 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.add_message_handler(BlockBroadcastMessage, self.on_block_broadcast)
         self.add_message_handler(HashRequest, self.on_hash_request)
         self.add_message_handler(HashResponse, self.on_hash_response)
+        self.add_message_handler(DoubleHashRequest, self.on_double_hash_request)
+        self.add_message_handler(DoubleHashResponse, self.on_double_hash_response)
 
         self.server = None
-        self.peers: dict[bytes, Peer] = {}
+        self.peers: dict[bytes, Peer | None] = {}
         self.mempool: List[Transaction] = []
         self.mempool_storage: dict[bytes, Transaction] = {}
         self.task: None | asyncio.Task = None
@@ -154,6 +175,12 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.mining_job_id = 0  
         self.mining_stop_event = threading.Event()
         self.mining_thread: threading.Thread | None = None
+
+        self.ignored_peers: set[bytes] = set()
+
+        self.search_low: int = 0
+        self.search_high: int = 0
+        self.peer0: Peer | None = None
 
     def started(self) -> None:
         print("Started peer")
@@ -178,6 +205,9 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             print(f"Found peer {OTHER_PEER_KEYS[peer_key] + 1}")
             
         
+        if peer_key == PUBLIC_KEY_1:
+            self.peer0 = peer
+        
         print(f"Current peers state: {[p.address if p else None for p in self.peers.values()]}")
         print(f"Server: {self.server.address if self.server else None}")
 
@@ -189,6 +219,8 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
 
     def send_to_others(self, payload: DataClassPayload) -> None:
         for peer in self.peers.values():
+            if peer is None:
+                continue
             self.ez_send(peer, payload)
         
     
@@ -232,7 +264,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         )
 
         if block is None:
-            print("None block!?!?")
+            # print("None block!?!?")
             return
         if job_id != self.mining_job_id or stop_event.is_set():
             print("Stale block mined")
@@ -264,15 +296,29 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             block.block_hash,
             b"".join(block.tx_hashes),
         )
-
-        self.send_to_others(message)
+        if message.height <= 60 and MY_ORDER != 1:
+            self.peers[PUBLIC_KEY_1] = None
+            self.send_to_others(message)
+        if message.height <= 60 and MY_ORDER == 1:
+            pass
+        if message.height > 60 and MY_ORDER != 1:
+            assert self.peer0 is not None
+            self.peers[PUBLIC_KEY_1] = self.peer0
+            self.send_to_others(message)
+        if message.height > 60 and MY_ORDER == 1:
+            self.send_to_others(message)
+            
         print("finished mining")
         self.start_pow_search_task()
+    
+    def compute_mid(self) -> int:
+        """Computes the middle point for the binary search of Divergence Point"""
+        return self.search_low + (self.search_high - self.search_low) // 2
 
     @lazy_wrapper(BlockBroadcastMessage)
     def on_block_broadcast(self, peer: Peer, payload: BlockBroadcastMessage) -> None:
-        if peer.public_key.key_to_bin() not in PUBLIC_KEYS:
-            print("Received block broadcast from unknown peer")
+        if peer.public_key.key_to_bin() not in PUBLIC_KEYS or peer.public_key.key_to_bin() in self.ignored_peers:
+            #print("Received block broadcast from unknown peer")
             return
 
         block = Block(
@@ -293,13 +339,13 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             return
         
         if not verify_prev_links_cleanly(block, self.chain[-1].block_hash):
+            print("Received unlinked block")
             print(
                 f"Link mismatch: block.height={block.height}, "
                 f"block.prev_hash={block.prev_hash.hex()}, "
                 f"local_tip_height={self.chain[-1].height}, "
                 f"local_tip_hash={self.chain[-1].block_hash.hex()}"
             )
-            print("Received block from different chain")
 
             if block.height < len(self.chain)-1:
                 print("Received unlinked block is behind, ignoring")
@@ -308,15 +354,24 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             elif block.height == len(self.chain)-1:
                 print("Received unlinked block is at the same level as ours, ignoring")
                 return
+
+            if block.height == 1:
+                print("Genesis block is not linked to suggest block at height 1")
+                return None
             
             elif block.height > len(self.chain)-1:
                 print("Received unlinked block is ahead of ours, adopting")
-                if len(self.chain) < 2:
-                    print("They are disagreeing about the genesis block?")
-                    return None
-                self.ez_send(peer, HashRequest(len(self.chain)-1))
+
+                # Set up things for sync and disagreement search
                 self.sync_peer = peer
                 self.sync_their_height = block.height
+                self.search_low = max(0, len(self.chain)-MAX_DISAGREEMENT_DEPTH)
+                self.search_high = len(self.chain) - 1
+                # First check if we disagree to deep
+                if len(self.chain) > MAX_DISAGREEMENT_DEPTH:
+                    self.ez_send(peer, HashRequest(len(self.chain) - MAX_DISAGREEMENT_DEPTH))
+                else:
+                    self.ez_send(peer, DoubleHashRequest(self.compute_mid()))
                 return
         
         if block.height < len(self.chain)-1:
@@ -415,6 +470,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             payload.block_hash,
             [payload.tx_hashes[i:i+32] for i in range(0, len(payload.tx_hashes), 32)]
         )
+        #print(f"Got BlockResponse")
         height = block.height
         block.block_hash = compute_block_hash(block_to_header(block))
         if not verify_block(block):
@@ -443,7 +499,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     @lazy_wrapper(SubmitTransactionMessage)
     def on_submit_transaction(self, peer: Peer, payload: SubmitTransactionMessage) -> None:
         print(f"Received submit transaction {payload}")
-        if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
+        if peer.public_key.key_to_bin() not in CLIENT_KEYS:
             return
 
         tx = Transaction(
@@ -474,8 +530,8 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetChainHeight)
     def on_get_chain_height(self, peer: Peer, payload: GetChainHeight) -> None:
-        print(f"Received GetChainHeight: {payload}, my height: {len(self.chain) - 1}")
-        if peer.public_key.key_to_bin() != SERVER_PUBLIC_KEY:
+        print(f"Received GetChainHeight: {payload}")
+        if peer.public_key.key_to_bin() not in CLIENT_KEYS:
             return
         
         height = len(self.chain) - 1
@@ -491,9 +547,9 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(GetBlock)
     def on_get_block(self, peer: Peer, payload: GetBlock) -> None:
-        print(f"Got GetBlock: {payload} from {peer}")
+        print(f"Got GetBlock: {payload}")
         key = peer.public_key.key_to_bin()
-        if key != SERVER_PUBLIC_KEY and key not in OTHER_PEER_KEYS:
+        if key not in PUBLIC_KEYS + CLIENT_KEYS or key in self.ignored_peers:
             return
             
         if payload.height < 0 or payload.height >= len(self.chain):
@@ -516,7 +572,8 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
     
     @lazy_wrapper(HashRequest)
     def on_hash_request(self, peer: Peer, payload: HashRequest):
-        if peer.public_key.key_to_bin() not in OTHER_PEER_KEYS:
+        key = peer.public_key.key_to_bin()
+        if key not in OTHER_PEER_KEYS or key in self.ignored_peers:
             return
         if payload.height < 0:
             print("Discarding request for height < 0")
@@ -528,11 +585,26 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         message = HashResponse(payload.height, self.chain[payload.height].block_hash)
         self.ez_send(peer, message)
     
+    @lazy_wrapper(DoubleHashRequest)
+    def on_double_hash_request(self, peer: Peer, payload: DoubleHashRequest):
+        key = peer.public_key.key_to_bin()
+        if key not in OTHER_PEER_KEYS or key in self.ignored_peers:
+            return
+        if payload.height < 0:
+            print("Discarding request for height < 0")
+            return
+        print(f"Received hash request: {payload}")
+        if payload.height >= len(self.chain):
+            print("I'm not tall enough :(")
+            return
+        message = DoubleHashResponse(payload.height, self.chain[payload.height].block_hash, bytes(255) if payload.height == 0 else self.chain[payload.height-1].block_hash)
+        self.ez_send(peer, message)
+
     @lazy_wrapper(HashResponse)
     def on_hash_response(self, peer: Peer, payload: HashResponse) -> None:
-        if peer.public_key.key_to_bin() not in OTHER_PEER_KEYS:
+        if peer != self.sync_peer:
             return
-        print(f"Received HashResponse: {payload}")
+        print(f"Received DoubleHashResponse: {payload}")
         
         height = payload.height
         hash = payload.hash
@@ -540,17 +612,67 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         if height < 0:
             print(f"No common ancestor found, something is very wrong, {height}")
             return
+        
+        our_hash = self.chain[height].block_hash
 
-        if height >= len(self.chain) or self.chain[height].block_hash != hash: 
-            if height == 0:
-                print(f"No common ancestor found, something is very wrong, {height}")
-                return
+        # Disagreement is deeper than MAX_DISAGREEMENT_DEPTH
+        if hash != our_hash:
+            print("Disagreement too deep")
+            self.ignored_peers.add(peer.public_key.key_to_bin())
+            self.cancel_sync()
+            return
+        self.ez_send(peer, DoubleHashRequest(self.compute_mid()))
+    
+    @lazy_wrapper(DoubleHashResponse)
+    def on_double_hash_response(self, peer: Peer, payload: DoubleHashResponse) -> None:
+        if peer != self.sync_peer:
+            return
+        print(f"Received DoubleHashResponse: {payload}")
+        
+        height = payload.height
+        hash = payload.hash
+        previous_hash = payload.hash_previous
 
-            print(f"Need to look backwards to {height-1}")
-            message = HashRequest(height-1)
+        if height < 0:
+            print(f"No common ancestor found, something is very wrong, {height}")
+            return
+
+        mid: int = self.compute_mid()
+        if height != mid:
+            print(f"Received hash response at height: {height} different than the one we were expecting {mid}, low: {self.search_low}, high: {self.search_high}")
+            return
+
+
+        # Case 1: Hash is not linked to our previous block, so we are looking too high
+        if height > 0 and previous_hash != self.chain[height - 1].block_hash:
+            print(f"Hash at height {height} is not linked to our chain, looking lower, hash: {hash.hex()}, previous hash: {previous_hash.hex()}, expected previous hash: {self.chain[height - 1].block_hash.hex()}")
+            self.search_high = mid - 1
+            mid: int = self.compute_mid()
+            print(f"Need to look backwards to {mid}")
+            message = DoubleHashRequest(mid)
+            self.ez_send(peer, message)
+            return
+            
+        # Case 2: Hash is linked, but blocks are not equal, so we found the divergence point, we can stop the search and start syncing
+        # Termination case
+        elif height > 0 and previous_hash == self.chain[height - 1].block_hash and hash != self.chain[height].block_hash:
+            print(f"Hash at height {height} is linked but different than ours, syncing, hash: {hash.hex()}, previous hash: {previous_hash.hex()}, expected hash: {self.chain[height].block_hash.hex()}")
+
+        # Case 3: Hash is linked and blocks are equal, so we are looking too low
+        elif height > 0: 
+            self.search_low = mid + 1
+            mid: int = self.compute_mid()
+
+            print(f"Need to look forwards to {mid}")
+            message = DoubleHashRequest(mid)
             self.ez_send(peer, message)
             return
         
+        if height == 0 and hash != self.chain[0].block_hash:
+                print(f"Disagreement about genesis block, something is very wrong, {height}")
+                return
+        if height == 0: height = 1
+
         # Found Divergence point
         print(f"Fork point at height {height}, trimming chain and syncing")
 
@@ -560,14 +682,14 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         
         # Set variables for the sync and start it
         self.sync_block_buffer = []
-        self.sync_block_count = self.sync_their_height - height
-        self.fork_height = height
-        self.sync_their_tip(peer, height + 1, self.sync_their_height)
+        self.sync_block_count = self.sync_their_height - (height-1)
+        self.fork_height = height-1
+        self.sync_their_tip(peer, height, self.sync_their_height)
 
 
 async def start_client() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
-    builder.add_key("me", "curve25519", "myKeys.pem")
+    builder.add_key("me", "curve25519", KEYS_FILE)
 
     builder.add_overlay(
         "BlockchainEngineeringCommunity",
