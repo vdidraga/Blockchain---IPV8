@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import signal
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, WalkerDefinition, Strategy, default_bootstrap_defs
 from ipv8.util import run_forever
@@ -10,8 +11,8 @@ from ipv8.lazy_community import lazy_wrapper
 from ipv8_service import IPv8
 from dotenv import load_dotenv
 from os import getenv
+import json
 
-from client3_miner import *
 from client3_miner import Transaction, Block, genesis_block, mine_block_with_stop, compute_transaction_hash, compute_block_hash, block_to_header, verify_block, verify_prev_links_cleanly, verify_transaction_signature
 from typing import List
 import threading
@@ -222,7 +223,6 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             if peer is None:
                 continue
             self.ez_send(peer, payload)
-        
     
     def start_pow_search_task(self)  -> None:
         """
@@ -310,6 +310,15 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             
         print("finished mining")
         self.start_pow_search_task()
+    
+    def save_chain(self) -> None:
+        print("Saving the chain...")
+        data = json.dumps([block.to_json() for block in self.chain])
+        with open("chain.json", "w") as file:
+            try:
+                file.write(data)
+            except Exception as e:
+                print(f"Error during saving chain: {e}")
     
     def compute_mid(self) -> int:
         """Computes the middle point for the binary search of Divergence Point"""
@@ -700,12 +709,20 @@ async def start_client() -> None:
         [("started",)],
     )
 
-    await IPv8(
+    ipv8 = IPv8(
         builder.finalize(),
         extra_communities={
             "BlockchainEngineeringCommunity": BlockchainEngineeringCommunity
         },
-    ).start()
+    )
+
+    await ipv8.start()
+    community = ipv8.get_overlay(BlockchainEngineeringCommunity)
+    loop = asyncio.get_running_loop()
+    assert community is not None
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, community.save_chain)
 
     await run_forever()
 

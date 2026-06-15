@@ -5,6 +5,7 @@ from hashlib import sha256
 from ipv8.keyvault.crypto import default_eccrypto
 import os
 
+
 @dataclass
 class Block:
     height: int
@@ -15,6 +16,18 @@ class Block:
     nonce: int
     block_hash: bytes
     tx_hashes: list[bytes]
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "height": self.height,
+            "prev_hash": self.prev_hash.hex(),
+            "txs_hash": self.txs_hash.hex(),
+            "timestamp": self.timestamp,
+            "difficulty": self.difficulty,
+            "nonce": self.nonce,
+            "block_hash": self.block_hash.hex(),
+            "tx_hashes": [tx_hash.hex() for tx_hash in self.tx_hashes],
+        }
 
 @dataclass
 class Transaction:
@@ -102,7 +115,9 @@ def mine_block_with_stop(
             return possible
         num_tries += 1
 
-def verify_block(block: Block) -> bool:
+def verify_block(block: Block | None) -> bool:
+    if block is None:
+        return False
     header = block_to_header(block)
     hash = compute_block_hash(header)
     if hash != block.block_hash:

@@ -41,6 +41,7 @@ def test_pow_check_respects_leading_zeros():
 
 def test_mine_block_valid_pow():
     block = mine_block_with_stop(height = 1, prev_hash = genesis_block.block_hash, transactions = [], job_id = 0, difficulty = DIFFICULTY, should_stop = lambda: False)
+    assert block is not None
     assert verify_block(block)
     assert verify_prev_links_cleanly(block, genesis_block.block_hash)
 
@@ -63,16 +64,19 @@ def test_txs_hash_ordering():
 # BLOCK VALIDATION
 def test_verify_rejects_wrong_block_hash():
     block = mine_block_with_stop(height = 1, prev_hash = genesis_block.block_hash, transactions = [], job_id = 0, difficulty = DIFFICULTY, should_stop = lambda: False)
+    assert block is not None
     block.block_hash = bytes(32)
     assert not verify_block(block)
 
 def test_verify_rejects_wrong_txs_hash():
     block = mine_block_with_stop(height = 1, prev_hash = genesis_block.block_hash, transactions = [], job_id = 0, difficulty = DIFFICULTY, should_stop = lambda: False)
+    assert block is not None
     block.txs_hash = bytes(32)
     assert not verify_block(block)
 
 def test_verify_prev_links_rejects_wrong_prev():
     block = mine_block_with_stop(height = 1, prev_hash = genesis_block.block_hash, transactions = [], job_id = 0, difficulty = DIFFICULTY, should_stop = lambda: False)
+    assert block is not None
     assert not verify_prev_links_cleanly(block, bytes(32))
 
 def test_mine_block_ret_none_on_stop():
@@ -89,6 +93,7 @@ def test_mine_block_properly():
     tx = Transaction(pub, data, timestamp, sig)
     
     block = mine_block_with_stop(height = 1, prev_hash = genesis_block.block_hash, transactions = [tx], job_id = 0, difficulty = DIFFICULTY, should_stop = lambda: False)
+    assert block is not None
     assert verify_block(block)
     assert block.txs_hash == compute_txs_hash([compute_transaction_hash(tx)])
     assert len(block.tx_hashes) == 1
