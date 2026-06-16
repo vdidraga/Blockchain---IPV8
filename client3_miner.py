@@ -28,6 +28,25 @@ class Block:
             "block_hash": self.block_hash.hex(),
             "tx_hashes": [tx_hash.hex() for tx_hash in self.tx_hashes],
         }
+    
+    @staticmethod
+    def from_json(json_block: dict[str, object]) -> "Block":
+        height: int = json_block.get("height", -1)
+        prev_hash: str = json_block.get("prev_hash", "")
+        txs_hash: str = json_block.get("txs_hash", "")
+        timestamp: int = json_block.get("timestamp", -1)
+        difficulty: int = json_block.get("difficulty", -1)
+        nonce: int = json_block.get("nonce", -1)
+        block_hash: str = json_block.get("block_hash", "")
+        tx_hashes: list[str] = json_block.get("tx_hashes", [-1])
+
+        prev_hash_bytes: bytes = bytes.fromhex(prev_hash)
+        txs_hash_bytes: bytes = bytes.fromhex(txs_hash)
+        block_hash_bytes: bytes = bytes.fromhex(block_hash)
+        tx_hashes_bytes: list[bytes] = [bytes.fromhex(tx_hash) for tx_hash in tx_hashes]
+
+        result: Block = Block(height, prev_hash_bytes, txs_hash_bytes, timestamp, difficulty, nonce, block_hash_bytes, tx_hashes_bytes)
+        return result
 
 @dataclass
 class Transaction:
