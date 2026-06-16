@@ -19,6 +19,9 @@ import threading
 
 load_dotenv()
 
+PARTITION=False
+LOAD_FROM_FILE=False
+
 # Load environment variables 
 community_3_id = getenv("CLIENT_3_COMMUNITY_ID", "")
 GROUP_ID = getenv("GROUP_ID", "")
@@ -296,16 +299,20 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             block.block_hash,
             b"".join(block.tx_hashes),
         )
-        if message.height <= 60 and MY_ORDER != 1:
-            self.peers[PUBLIC_KEY_1] = None
-            self.send_to_others(message)
-        if message.height <= 60 and MY_ORDER == 1:
-            pass
-        if message.height > 60 and MY_ORDER != 1:
-            assert self.peer0 is not None
-            self.peers[PUBLIC_KEY_1] = self.peer0
-            self.send_to_others(message)
-        if message.height > 60 and MY_ORDER == 1:
+
+        if PARTITION:
+            if message.height <= 60 and MY_ORDER != 1:
+                self.peers[PUBLIC_KEY_1] = None
+                self.send_to_others(message)
+            if message.height <= 60 and MY_ORDER == 1:
+                pass
+            if message.height > 60 and MY_ORDER != 1:
+                assert self.peer0 is not None
+                self.peers[PUBLIC_KEY_1] = self.peer0
+                self.send_to_others(message)
+            if message.height > 60 and MY_ORDER == 1:
+                self.send_to_others(message)
+        else:
             self.send_to_others(message)
             
         print("finished mining")
