@@ -18,12 +18,12 @@ from ipv8.util import run_forever
 from ipv8_service import IPv8
 
 load_dotenv()
-community_3_id = getenv("CLIENT_3_COMMUNITY_ID")
-GROUP_ID = getenv("GROUP_ID")
-KEYS_FILE = getenv("KEYS_FILE")
-assert community_3_id and GROUP_ID and KEYS_FILE
+community_3_id = getenv("CLIENT_3_COMMUNITY_ID", "")
+GROUP_ID = getenv("GROUP_ID", "")
+KEYS_FILE = getenv("KEYS_FILE", "")
+assert "" not in [community_3_id, GROUP_ID, KEYS_FILE]
 
-COMMUNITY_ID = bytes.fromhex(
+REGISTRATION_COMMUNITY_ID = bytes.fromhex(
     "4c616233426c6f636b636861696e323032365057"
 )
 OUR_COMMUNITY_ID = bytes.fromhex(
@@ -53,7 +53,7 @@ _ = RegisterResponse(False, "")
 
 class RegistrationCommunity(Community, PeerObserver):
 
-    community_id = COMMUNITY_ID
+    community_id = REGISTRATION_COMMUNITY_ID
 
     def __init__(self, settings: CommunitySettings) -> None:
         super().__init__(settings)

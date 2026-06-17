@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import signal
 from ipv8.community import Community, CommunitySettings
 from ipv8.configuration import ConfigBuilder, WalkerDefinition, Strategy, default_bootstrap_defs
 from ipv8.util import run_forever
@@ -10,20 +11,24 @@ from ipv8.lazy_community import lazy_wrapper
 from ipv8_service import IPv8
 from dotenv import load_dotenv
 from os import getenv
+import json
 
-from client3_miner import *
 from client3_miner import Transaction, Block, genesis_block, mine_block_with_stop, compute_transaction_hash, compute_block_hash, block_to_header, verify_block, verify_prev_links_cleanly, verify_transaction_signature
 from typing import List
 import threading
 
 load_dotenv()
 
+PARTITION=False
+LOAD_FROM_FILE=True
+
 # Load environment variables 
-community_3_id = getenv("CLIENT_3_COMMUNITY_ID")
-GROUP_ID = getenv("GROUP_ID")
-MY_ORDER = int(getenv("MY_ORDER"))
-KEYS_FILE = getenv("KEYS_FILE")
-assert community_3_id and GROUP_ID and MY_ORDER and KEYS_FILE, "Some environemt variables are missing"
+community_3_id = getenv("CLIENT_3_COMMUNITY_ID", "")
+GROUP_ID = getenv("GROUP_ID", "")
+MY_ORDER = int(getenv("MY_ORDER", -1))
+KEYS_FILE = getenv("KEYS_FILE", "")
+assert "" not in [community_3_id, GROUP_ID, KEYS_FILE]
+assert MY_ORDER != -1
 COMMUNITY_ID = bytes.fromhex(community_3_id)
 
 SERVER_PUBLIC_KEY = bytes.fromhex(
@@ -157,7 +162,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.add_message_handler(DoubleHashResponse, self.on_double_hash_response)
 
         self.server = None
-        self.peers: dict[bytes, Peer] = {}
+        self.peers: dict[bytes, Peer | None] = {}
         self.mempool: List[Transaction] = []
         self.mempool_storage: dict[bytes, Transaction] = {}
         self.task: None | asyncio.Task = None
@@ -185,6 +190,9 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         print("Started peer")
         print("I am public key:", self.my_peer.public_key.key_to_bin().hex())
 
+        if LOAD_FROM_FILE:
+            self.load_chain_from_file()
+
         self.network.add_peer_observer(self)
         self.start_pow_search_task()
         # Store myself.
@@ -202,6 +210,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         elif peer_key in OTHER_PEER_KEYS:
             self.peers[peer_key] = peer
             print(f"Found peer {OTHER_PEER_KEYS[peer_key] + 1}")
+            
         
         if peer_key == PUBLIC_KEY_1:
             self.peer0 = peer
@@ -220,7 +229,18 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             if peer is None:
                 continue
             self.ez_send(peer, payload)
-        
+    
+    def load_chain_from_file(self) -> None:
+        "Loads the blockchain from the chain.json file"
+        print("Loading the blockchain...")
+
+        with open("chain.json", "r") as file:
+            content = file.read()
+            chain = json.loads(content)
+            chain_converted = [Block.from_json(block) for block in chain]
+            self.chain = chain_converted
+
+        print(f"Successfully loaded chain of height: {len(self.chain)-1}")
     
     def start_pow_search_task(self)  -> None:
         """
@@ -294,19 +314,33 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             block.block_hash,
             b"".join(block.tx_hashes),
         )
-        if message.height <= 60 and MY_ORDER != 1:
-            self.peers[PUBLIC_KEY_1] = None
-            self.send_to_others(message)
-        if message.height <= 60 and MY_ORDER == 1:
-            pass
-        if message.height > 60 and MY_ORDER != 1:
-            self.peers[PUBLIC_KEY_1] = self.peer0
-            self.send_to_others(message)
-        if message.height > 60 and MY_ORDER == 1:
+
+        if PARTITION:
+            if message.height <= 60 and MY_ORDER != 1:
+                self.peers[PUBLIC_KEY_1] = None
+                self.send_to_others(message)
+            if message.height <= 60 and MY_ORDER == 1:
+                pass
+            if message.height > 60 and MY_ORDER != 1:
+                assert self.peer0 is not None
+                self.peers[PUBLIC_KEY_1] = self.peer0
+                self.send_to_others(message)
+            if message.height > 60 and MY_ORDER == 1:
+                self.send_to_others(message)
+        else:
             self.send_to_others(message)
             
         print("finished mining")
         self.start_pow_search_task()
+    
+    def save_chain(self) -> None:
+        print("Saving the chain...")
+        data = json.dumps([block.to_json() for block in self.chain])
+        with open("chain.json", "w") as file:
+            try:
+                file.write(data)
+            except Exception as e:
+                print(f"Error during saving chain: {e}")
     
     def compute_mid(self) -> int:
         """Computes the middle point for the binary search of Divergence Point"""
@@ -564,7 +598,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
             block.block_hash,
             b"".join(block.tx_hashes)
         )
-
+        print(f"Responding to getBlock with {response}")
         self.ez_send(peer, response)
     
     @lazy_wrapper(HashRequest)
@@ -683,6 +717,7 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         self.fork_height = height-1
         self.sync_their_tip(peer, height, self.sync_their_height)
 
+
 async def start_client() -> None:
     builder = ConfigBuilder().clear_keys().clear_overlays()
     builder.add_key("me", "curve25519", KEYS_FILE)
@@ -696,12 +731,20 @@ async def start_client() -> None:
         [("started",)],
     )
 
-    await IPv8(
+    ipv8 = IPv8(
         builder.finalize(),
         extra_communities={
             "BlockchainEngineeringCommunity": BlockchainEngineeringCommunity
         },
-    ).start()
+    )
+
+    await ipv8.start()
+    community = ipv8.get_overlay(BlockchainEngineeringCommunity)
+    loop = asyncio.get_running_loop()
+    assert community is not None
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, community.save_chain)
 
     await run_forever()
 
