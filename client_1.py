@@ -18,7 +18,7 @@ from ipv8_service import IPv8
 from os import getenv
 from dotenv import load_dotenv
 
-from mine import mine
+from nonce_finder import mine
 
 varlenHutf8 = type_from_format("varlenHutf8")
 

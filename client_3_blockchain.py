@@ -234,13 +234,16 @@ class BlockchainEngineeringCommunity(Community, PeerObserver):
         "Loads the blockchain from the chain.json file"
         print("Loading the blockchain...")
 
-        with open("chain.json", "r") as file:
-            content = file.read()
-            chain = json.loads(content)
-            chain_converted = [Block.from_json(block) for block in chain]
-            self.chain = chain_converted
+        try:
+            with open("chain.json", "r") as file:
+                content = file.read()
+                chain = json.loads(content)
+                chain_converted = [Block.from_json(block) for block in chain]
+                self.chain = chain_converted
 
-        print(f"Successfully loaded chain of height: {len(self.chain)-1}")
+            print(f"Successfully loaded chain of height: {len(self.chain)-1}")
+        except Exception as e:
+            print(f"Failed to load chain: {e}")
     
     def start_pow_search_task(self)  -> None:
         """

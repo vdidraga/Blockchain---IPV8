@@ -3,3 +3,4 @@
 *.pem
 **/.pytest_cache/**
 chain.json
+venv/**
